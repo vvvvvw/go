@@ -326,6 +326,8 @@ const (
 //
 // This must be set by the OS init code (typically in osinit) before
 // mallocinit.
+// physPageSize 是操作系统的内存物理页字节大小。
+// 内存页的映射和反映射操作必须以 physPageSize 的整数倍完成
 var physPageSize uintptr
 
 // physHugePageSize is the size in bytes of the OS's default physical huge

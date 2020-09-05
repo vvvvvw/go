@@ -660,21 +660,22 @@ TEXT runtime·sigaltstack(SB),NOSPLIT,$-8
 	MOVL	$0xf1, 0xf1  // crash
 	RET
 
+//此函数进行 arch_prctl 系统调用并 ARCH_SET_FS 作为参数传递， 为 FS 段寄存器设置了基础
 // set tls base to DI
 TEXT runtime·settls(SB),NOSPLIT,$32
 #ifdef GOOS_android
 	// Android stores the TLS offset in runtime·tls_g.
 	SUBQ	runtime·tls_g(SB), DI
 #else
-	ADDQ	$8, DI	// ELF wants to use -8(FS)
+	ADDQ	$8, DI	// ELF wants to use -8(FS) // DI = DI + 8, ELF 格式使用 -8(FS)
 #endif
-	MOVQ	DI, SI
-	MOVQ	$0x1002, DI	// ARCH_SET_FS
+	MOVQ	DI, SI  // SI = DI
+	MOVQ	$0x1002, DI	// ARCH_SET_FS // 0x1002 == ARCH_SET_FS
 	MOVQ	$SYS_arch_prctl, AX
 	SYSCALL
-	CMPQ	AX, $0xfffffffffffff001
+	CMPQ	AX, $0xfffffffffffff001 // 验证是否成功
 	JLS	2(PC)
-	MOVL	$0xf1, 0xf1  // crash
+	MOVL	$0xf1, 0xf1  // crash // 崩溃
 	RET
 
 TEXT runtime·osyield(SB),NOSPLIT,$0

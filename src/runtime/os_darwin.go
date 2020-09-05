@@ -393,7 +393,9 @@ func sigdelset(mask *sigset, i int) {
 //go:linkname executablePath os.executablePath
 var executablePath string
 
+//对于 Darwin 系统而言，只负责获取程序的 executable_path
 func sysargs(argc int32, argv **byte) {
+	// 跳过 argv, envv 与第一个字符串为路径
 	// skip over argv, envv and the first string will be the path
 	n := argc + 1
 	for argv_index(argv, n) != nil {

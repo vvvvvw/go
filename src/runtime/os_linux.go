@@ -195,6 +195,7 @@ var addrspace_vec [1]byte
 func mincore(addr unsafe.Pointer, n uintptr, dst *byte) int32
 
 func sysargs(argc int32, argv **byte) {
+	// 跳过 argv, envp 来获取 auxv
 	n := argc + 1
 
 	// skip over argv, envp to get to auxv
@@ -203,13 +204,18 @@ func sysargs(argc int32, argv **byte) {
 	}
 
 	// skip NULL separator
-	n++
+	n++ // 跳过 NULL 分隔符
 
+	// 尝试读取 auxv
 	// now argv+n is auxv
 	auxv := (*[1 << 28]uintptr)(add(unsafe.Pointer(argv), uintptr(n)*sys.PtrSize))
 	if sysauxv(auxv[:]) != 0 {
 		return
 	}
+	// 处理无法读取 auxv 的情况：
+	// 一种方法是尝试读取 /proc/self/auxv。
+	// 如果这个文件不存在，还可以尝试调用 mmap 等内存分配的系统调用直接测试物理页的大小。
+
 	// In some situations we don't get a loader-provided
 	// auxv, such as when loaded as a library on Android.
 	// Fall back to /proc/self/auxv.
@@ -255,16 +261,21 @@ var startupRandomData []byte
 
 func sysauxv(auxv []uintptr) int {
 	var i int
+	// 依次读取 auxv 键值对
 	for ; auxv[i] != _AT_NULL; i += 2 {
 		tag, val := auxv[i], auxv[i+1]
 		switch tag {
 		case _AT_RANDOM:
+			// 读取内存页的大小
 			// The kernel provides a pointer to 16-bytes
 			// worth of random data.
 			startupRandomData = (*[16]byte)(unsafe.Pointer(val))[:]
 
 		case _AT_PAGESZ:
 			physPageSize = val
+			// 这里其实也可能出现无法读取到物理页大小的情况，但后续再内存分配器初始化的时候还会对
+			// physPageSize 的大小进行检查，如果读取失败则无法运行程序，从而抛出运行时错误
+
 		}
 
 		archauxv(tag, val)
@@ -300,8 +311,8 @@ func getHugePageSize() uintptr {
 }
 
 func osinit() {
-	ncpu = getproccount()
-	physHugePageSize = getHugePageSize()
+	ncpu = getproccount()                //获取系统核心数
+	physHugePageSize = getHugePageSize() // 内部使用 sysctl 来获取物理页大小
 	osArchInit()
 }
 

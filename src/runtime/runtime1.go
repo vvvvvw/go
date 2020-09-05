@@ -160,6 +160,7 @@ func check() {
 	var x1 x1t
 	var y1 y1t
 
+	// 校验 int8 类型 sizeof 是否为 1，下同
 	if unsafe.Sizeof(a) != 1 {
 		throw("bad a")
 	}

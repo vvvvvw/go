@@ -532,6 +532,7 @@ func cpuinit() {
 //	call runtime·mstart
 //
 // The new G calls runtime·main.
+//schedinit 函数名表面上是调度器的初始化，但实际上它包含了所有核心组件的初始化工作
 func schedinit() {
 	lockInit(&sched.lock, lockRankSched)
 	lockInit(&sched.sysmonlock, lockRankSysmon)
@@ -555,19 +556,19 @@ func schedinit() {
 	if raceenabled {
 		_g_.racectx, raceprocctx0 = raceinit()
 	}
-
-	sched.maxmcount = 10000
+	// 栈、内存分配器、调度器相关初始化
+	sched.maxmcount = 10000 // 限制最大系统线程数量
 
 	moduledataverify()
-	stackinit()
-	mallocinit()
-	fastrandinit() // must run before mcommoninit
-	mcommoninit(_g_.m, -1)
-	cpuinit()       // must run before alginit
-	alginit()       // maps must not be used before this call
-	modulesinit()   // provides activeModules
-	typelinksinit() // uses maps, activeModules
-	itabsinit()     // uses activeModules
+	stackinit()            // 初始化执行栈
+	mallocinit()           // 初始化内存分配器
+	fastrandinit()         // must run before mcommoninit
+	mcommoninit(_g_.m, -1) // 初始化当前系统线程
+	cpuinit()              // must run before alginit
+	alginit()              // maps must not be used before this call
+	modulesinit()          // provides activeModules
+	typelinksinit()        // uses maps, activeModules
+	itabsinit()            // uses activeModules
 
 	msigsave(_g_.m)
 	initSigmask = _g_.m.sigmask
@@ -575,9 +576,11 @@ func schedinit() {
 	goargs()
 	goenvs()
 	parsedebugvars()
-	gcinit()
+	gcinit() // 垃圾回收器初始化
 
 	sched.lastpoll = uint64(nanotime())
+	// 创建 P
+	// 通过 CPU 核心数和 GOMAXPROCS 环境变量确定 P 的数量
 	procs := ncpu
 	if n, ok := atoi32(gogetenv("GOMAXPROCS")); ok && n > 0 {
 		procs = n

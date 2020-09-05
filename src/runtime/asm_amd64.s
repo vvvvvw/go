@@ -12,8 +12,8 @@
 // kernel for an ordinary -buildmode=exe program. The stack holds the
 // number of arguments and the C-style argv.
 TEXT _rt0_amd64(SB),NOSPLIT,$-8
-	MOVQ	0(SP), DI	// argc
-	LEAQ	8(SP), SI	// argv
+	MOVQ	0(SP), DI	// argc //参数的数量
+	LEAQ	8(SP), SI	// argv //参数值
 	JMP	runtime·rt0_go(SB)
 
 // main is common startup code for most amd64 systems when using
@@ -85,26 +85,29 @@ DATA _rt0_amd64_lib_argv<>(SB)/8, $0
 GLOBL _rt0_amd64_lib_argv<>(SB),NOPTR, $8
 
 TEXT runtime·rt0_go(SB),NOSPLIT,$0
+// 将 之前复制的参数数量和参数值向前复制到一个偶数栈16(SP)、24(SP)上
 	// copy arguments forward on an even stack
-	MOVQ	DI, AX		// argc
-	MOVQ	SI, BX		// argv
+	MOVQ	DI, AX		// argc 参数数量
+	MOVQ	SI, BX		// argv 参数值
 	SUBQ	$(4*8+7), SP		// 2args 2auto
 	ANDQ	$~15, SP
 	MOVQ	AX, 16(SP)
 	MOVQ	BX, 24(SP)
 
+// 初始化 g0 执行栈
 	// create istack out of the given (operating system) stack.
 	// _cgo_init may update stackguard.
-	MOVQ	$runtime·g0(SB), DI
+	MOVQ	$runtime·g0(SB), DI  // DI = g0
 	LEAQ	(-64*1024+104)(SP), BX
-	MOVQ	BX, g_stackguard0(DI)
-	MOVQ	BX, g_stackguard1(DI)
-	MOVQ	BX, (g_stack+stack_lo)(DI)
-	MOVQ	SP, (g_stack+stack_hi)(DI)
+	MOVQ	BX, g_stackguard0(DI) // g0.stackguard0 = SP + (-64*1024+104)
+	MOVQ	BX, g_stackguard1(DI) // g0.stackguard1 = SP + (-64*1024+104)
+	MOVQ	BX, (g_stack+stack_lo)(DI) // g0.stack.lo    = SP + (-64*1024+104)
+	MOVQ	SP, (g_stack+stack_hi)(DI) // g0.stack.hi    = SP
 
+// 确定 CPU 处理器的信息
 	// find out information about the processor we're on
 	MOVL	$0, AX
-	CPUID
+	CPUID             // CPUID 会设置 AX 的值
 	MOVL	AX, SI
 	CMPL	AX, $0
 	JE	nocpuinfo
@@ -177,20 +180,23 @@ needtls:
 #endif
 #ifdef GOOS_darwin
 	// skip TLS setup on Darwin
-	JMP ok
+	JMP ok             // 在 Darwin 系统上跳过 TLS 设置
 #endif
 
-	LEAQ	runtime·m0+m_tls(SB), DI
-	CALL	runtime·settls(SB)
+	LEAQ	runtime·m0+m_tls(SB), DI   // DI = m0.tls
+	CALL	runtime·settls(SB)  // 将 TLS 地址设置到 DI
 
 	// store through it, to make sure it works
 	get_tls(BX)
 	MOVQ	$0x123, g(BX)
 	MOVQ	runtime·m0+m_tls(SB), AX
-	CMPQ	AX, $0x123
-	JEQ 2(PC)
-	CALL	runtime·abort(SB)
+	CMPQ	AX, $0x123  // 判断 TLS 是否设置成功
+	JEQ 2(PC)            // 如果相等则向后跳转两条指令
+	CALL	runtime·abort(SB)  // 使用 INT 指令执行中断
 ok:
+// 程序刚刚启动，此时位于主线程
+	// 当前栈与资源保存在 g0
+	// 该线程保存在 m0
 	// set the per-goroutine and per-mach "registers"
 	get_tls(BX)
 	LEAQ	runtime·g0(SB), CX
@@ -203,26 +209,29 @@ ok:
 	MOVQ	AX, g_m(CX)
 
 	CLD				// convention is D is always left cleared
-	CALL	runtime·check(SB)
+	CALL	runtime·check(SB) //运行时类型检查, 从代码上看只是检查了一下各种数据类型的大小是否符合预期，比如int8是8位的。本质上基本上属于对编译器翻译工作的一个校验，显然如果编译器的编译工作 不正确，运行时的运行过程便不是一个有效的过程,是go语言实现的
 
-	MOVL	16(SP), AX		// copy argc
+	MOVL	16(SP), AX		// copy argc // 复制 argc
 	MOVL	AX, 0(SP)
-	MOVQ	24(SP), AX		// copy argv
+	MOVQ	24(SP), AX		// copy argv // 复制 argv
 	MOVQ	AX, 8(SP)
-	CALL	runtime·args(SB)
-	CALL	runtime·osinit(SB)
-	CALL	runtime·schedinit(SB)
+	CALL	runtime·args(SB) //处理 来自操作系统的参数argc和argv（不只包括外部启动参数，还有可能包括内核级的信息，比如linux会携带 内存物理页大小，可以被设置到常量中去）
+	CALL	runtime·osinit(SB) //获取系统核心数和内存物理页大小
+	CALL	runtime·schedinit(SB) // 名义上是调度器初始化,实际上它包含了所有核心组件的初始化工作，这包括我们的调度器与内存分配器、回收器的初始化
 
+
+// 创建一个新的 goroutine 来启动程序
 	// create a new goroutine to start program
-	MOVQ	$runtime·mainPC(SB), AX		// entry
+	MOVQ	$runtime·mainPC(SB), AX		// entry   runtime.mainPC在数据段中被定义为 runtime.main，保存的是主 goroutine 入口地址 DATA	runtime·mainPC+0(SB)/8,$runtime·main(SB) GLOBL	runtime·mainPC(SB),RODATA,$8
 	PUSHQ	AX
-	PUSHQ	$0			// arg size
-	CALL	runtime·newproc(SB)
+	PUSHQ	$0			// arg size // 参数大小
+	CALL	runtime·newproc(SB) //负责根据主 goroutine （即 runtime.main）入口地址创建可被运行时调度的执行单元
 	POPQ	AX
 	POPQ	AX
 
+// 启动这个 M，mstart 应该永不返回
 	// start this M
-	CALL	runtime·mstart(SB)
+	CALL	runtime·mstart(SB) //开始启动调度器的调度循环
 
 	CALL	runtime·abort(SB)	// mstart should never return
 	RET
