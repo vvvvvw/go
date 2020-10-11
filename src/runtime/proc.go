@@ -112,6 +112,7 @@ var runtimeInitTime int64
 var initSigmask sigset
 
 // The main goroutine.
+//主goroutine的入口
 func main() {
 	g := getg()
 
@@ -119,6 +120,7 @@ func main() {
 	// It must not be used for anything else.
 	g.m.g0.racectx = 0
 
+	// 执行栈最大限制：1GB（64位系统）或者 250MB（32位系统）（使用10进制的原因是在栈溢出时打印错误信息时看起来更好看）
 	// Max stack size is 1 GB on 64-bit, 250 MB on 32-bit.
 	// Using decimal instead of binary GB and MB because
 	// they look nicer in the stack overflow failure message.
@@ -132,6 +134,7 @@ func main() {
 	mainStarted = true
 
 	if GOARCH != "wasm" { // no threads on wasm yet, so no sysmon
+		// 启动系统后台监控（定期垃圾回收、抢占调度等等）
 		systemstack(func() {
 			newm(sysmon, nil, -1)
 		})
@@ -149,6 +152,7 @@ func main() {
 		throw("runtime.main not on m0")
 	}
 
+	// 执行 runtime.init。运行时包中有多个 init 函数，编译器会将他们链接起来。
 	doInit(&runtime_inittask) // must be before defer
 	if nanotime() == 0 {
 		throw("nanotime returning zero")
@@ -165,6 +169,7 @@ func main() {
 	// Record when the world started.
 	runtimeInitTime = nanotime()
 
+	// 启用垃圾回收器
 	gcenable()
 
 	main_init_done = make(chan bool)
@@ -189,6 +194,7 @@ func main() {
 		cgocall(_cgo_notify_runtime_init_done, nil)
 	}
 
+	// 执行用户 main 包中的 init 函数，这意味着所有的 init 均在同一个主 Goroutine 中执行。为什么不在前面runtime.init执行？因为链接器设定运行时不知道 main 包的地址，处理为非间接调用
 	doInit(&main_inittask)
 
 	close(main_init_done)
@@ -201,6 +207,7 @@ func main() {
 		// has a main, but it is not executed.
 		return
 	}
+	// 执行用户 main 包中的 main 函数，意味着 main.main 和 init方法 均在同一个 Goroutine 中执行。
 	fn := main_main // make an indirect call, as the linker doesn't know the address of the main package when laying down the runtime
 	fn()
 	if raceenabled {
@@ -223,7 +230,7 @@ func main() {
 	if atomic.Load(&panicking) != 0 {
 		gopark(nil, nil, waitReasonPanicWait, traceEvGoStop, 1)
 	}
-
+	// 退出
 	exit(0)
 	for {
 		var x *int32
@@ -239,6 +246,7 @@ func os_beforeExit() {
 	}
 }
 
+//创建强制启动 GC 的监控 Goroutine
 // start forcegc helper goroutine
 func init() {
 	go forcegchelper()

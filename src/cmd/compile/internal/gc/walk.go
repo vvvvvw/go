@@ -333,12 +333,14 @@ func isSmallMakeSlice(n *Node) bool {
 	if n.Op != OMAKESLICE {
 		return false
 	}
-	r := n.Right
+	r := n.Right //right:cap left:len
 	if r == nil {
 		r = n.Left
 	}
 	t := n.Type
 
+	//1.cap的值大小在 2的32次方内
+	//2. 切片宽度大小为0或者 切片占据的内存空间（内存空间 = 切片中元素宽度 乘 切片cap）小于maxImplicitStackVarSize个字节
 	return smallintconst(r) && (t.Elem().Width == 0 || r.Int64() < maxImplicitStackVarSize/t.Elem().Width)
 }
 
@@ -715,6 +717,11 @@ opswitch:
 
 	// a,b = m[i]
 	case OAS2MAPR:
+		//转换map访问函数
+		/*
+			v, ok := hash[key] // => v, ok := mapaccess2(maptype, hash, &key)
+		*/
+
 		init.AppendNodes(&n.Ninit)
 
 		r := n.Right
@@ -1077,6 +1084,10 @@ opswitch:
 		}
 
 	case OINDEXMAP:
+		//转换map访问函数
+		/*
+			v     := hash[key] // => v     := *mapaccess1(maptype, hash, &key)
+		*/
 		// Replace m[k] with *map{access1,assign}(maptype, m, &k)
 		n.Left = walkexpr(n.Left, init)
 		n.Right = walkexpr(n.Right, init)
@@ -1084,6 +1095,7 @@ opswitch:
 		key := n.Right
 		t := map_.Type
 		if n.IndexMapLValue() {
+			//如果m[k]在赋值语句的左侧
 			// This m[k] expression is on the left-hand side of an assignment.
 			fast := mapfast(t)
 			if fast == mapslow {
@@ -1330,6 +1342,7 @@ opswitch:
 		if t.Elem().NotInHeap() {
 			yyerror("%v is go:notinheap; heap allocation disallowed", t.Elem())
 		}
+
 		if n.Esc == EscNone {
 			if !isSmallMakeSlice(n) {
 				Fatalf("non-small OMAKESLICE with EscNone: %v", n)
@@ -1367,6 +1380,7 @@ opswitch:
 			r = walkexpr(r, init)
 			n = r
 		} else {
+			//调用 runtime.makeslice 函数（在堆上初始化）
 			// n escapes; set up a call to makeslice.
 			// When len and cap can fit into int, use makeslice instead of
 			// makeslice64, which is faster and shorter on 32 bit platforms.

@@ -9,6 +9,7 @@
 
 package runtime
 
+//返回 mallocgc将分配的内存块大小
 // Returns size of the memory block that mallocgc will allocate if you ask for the size.
 func roundupsize(size uintptr) uintptr {
 	if size < _MaxSmallSize {

@@ -1186,6 +1186,7 @@ func strlit(n *Node) string {
 	return n.Val().U.(string)
 }
 
+//n的类型是否是 小于等于32位的int类型（TINT8，TUINT8，TINT16，TUINT16，TINT32，TUINT32，TBOOL）或者如果是 TIDEAL, TINT64, TUINT64, TPTR这几个类型的话，那么值是在 int32的范围之内
 // TODO(gri) smallintconst is only used in one place - can we used indexconst?
 func smallintconst(n *Node) bool {
 	if n.Op == OLITERAL && Isconst(n, CTINT) && n.Type != nil {

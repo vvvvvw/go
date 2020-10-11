@@ -2604,6 +2604,7 @@ func (s *state) expr(n *Node) *ssa.Value {
 			}
 			return s.load(types.Types[TUINT8], ptr)
 		case n.Left.Type.IsSlice():
+			//访问切片中元素使用的 OINDEX 操作在中间代码生成期间转换成对地址的直接访问
 			p := s.addr(n)
 			return s.load(n.Left.Type.Elem(), p)
 		case n.Left.Type.IsArray():
@@ -2634,6 +2635,7 @@ func (s *state) expr(n *Node) *ssa.Value {
 	case OLEN, OCAP:
 		switch {
 		case n.Left.Type.IsSlice():
+			//slice的len 和 cap操作
 			op := ssa.OpSliceLen
 			if n.Op == OCAP {
 				op = ssa.OpSliceCap
@@ -2749,6 +2751,7 @@ func (s *state) expr(n *Node) *ssa.Value {
 // back to the slice being appended to, and returns nil.
 // inplace MUST be set to false if the slice can be SSA'd.
 func (s *state) append(n *Node, inplace bool) *ssa.Value {
+	//slice append处理：如果 append 返回的『新切片』 不会覆盖原变量
 	// If inplace is false, process as expression "append(s, e1, e2, e3)":
 	//
 	// ptr, len, cap := s
@@ -2764,6 +2767,7 @@ func (s *state) append(n *Node, inplace bool) *ssa.Value {
 	// return makeslice(ptr, newlen, cap)
 	//
 	//
+	// slice append处理：如果 append 返回的『新切片』 会覆盖原变量
 	// If inplace is true, process as statement "s = append(s, e1, e2, e3)":
 	//
 	// a := &s

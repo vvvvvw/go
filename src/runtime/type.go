@@ -364,14 +364,14 @@ type interfacetype struct {
 
 type maptype struct {
 	typ    _type
-	key    *_type
-	elem   *_type
+	key    *_type //key的类型
+	elem   *_type //value的类型
 	bucket *_type // internal type representing a hash bucket
 	// function for hashing keys (ptr to key, seed) -> hash
-	hasher     func(unsafe.Pointer, uintptr) uintptr
-	keysize    uint8  // size of key slot
-	elemsize   uint8  // size of elem slot
-	bucketsize uint16 // size of bucket
+	hasher     func(unsafe.Pointer, uintptr) uintptr //hash算法
+	keysize    uint8                                 // size of key slot 每个key的大小
+	elemsize   uint8                                 // size of elem slot 每个value的大小
+	bucketsize uint16                                // size of bucket，每个bucket的大小
 	flags      uint32
 }
 

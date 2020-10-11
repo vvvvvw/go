@@ -1978,9 +1978,9 @@ type StringHeader struct {
 // it references will not be garbage collected, so programs must keep
 // a separate, correctly typed pointer to the underlying data.
 type SliceHeader struct {
-	Data uintptr
-	Len  int
-	Cap  int
+	Data uintptr //指向数组的指针，Data 作为一个指针指向的数组是一片连续的内存空间，这片内存空间可以用于存储切片中保存的全部元素
+	Len  int     //表示当前切片的长度
+	Cap  int     //表示当前切片的容量，也就是 Data 数组的大小
 }
 
 func typesMustMatch(what string, t1, t2 Type) {

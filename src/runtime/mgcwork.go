@@ -29,6 +29,7 @@ const (
 // #27993. To be removed before release.
 var throwOnGCWork bool
 
+//垃圾回收器所需的参数检查
 func init() {
 	if workbufAlloc%pageSize != 0 || workbufAlloc%_WorkbufSize != 0 {
 		throw("bad workbufAlloc")

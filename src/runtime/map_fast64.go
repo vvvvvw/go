@@ -89,6 +89,7 @@ func mapaccess2_fast64(t *maptype, h *hmap, key uint64) (unsafe.Pointer, bool) {
 	return unsafe.Pointer(&zeroVal[0]), false
 }
 
+//和mapassign的实现逻辑相差不多
 func mapassign_fast64(t *maptype, h *hmap, key uint64) unsafe.Pointer {
 	if h == nil {
 		panic(plainError("assignment to entry in nil map"))

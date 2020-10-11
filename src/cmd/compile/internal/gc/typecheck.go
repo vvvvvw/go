@@ -993,14 +993,15 @@ func typecheck1(n *Node, top int) (res *Node) {
 			}
 		}
 
+		//对访问数组的索引进行验证
 	case OINDEX:
 		ok |= ctxExpr
 		n.Left = typecheck(n.Left, ctxExpr)
 		n.Left = defaultlit(n.Left, nil)
 		n.Left = implicitstar(n.Left)
-		l := n.Left
+		l := n.Left // array
 		n.Right = typecheck(n.Right, ctxExpr)
-		r := n.Right
+		r := n.Right // index
 		t := l.Type
 		if t == nil || r.Type == nil {
 			n.Type = nil
@@ -1026,6 +1027,7 @@ func typecheck1(n *Node, top int) (res *Node) {
 				why = "slice"
 			}
 
+			//访问数组的索引是非整数时会直接报错
 			if n.Right.Type != nil && !n.Right.Type.IsInteger() {
 				yyerror("non-integer %s index %v", why, n.Right)
 				break
@@ -1033,8 +1035,10 @@ func typecheck1(n *Node, top int) (res *Node) {
 
 			if !n.Bounded() && Isconst(n.Right, CTINT) {
 				x := n.Right.Int64()
+				//访问数组的索引是负数时会直接报错
 				if x < 0 {
 					yyerror("invalid %s index %v (index must be non-negative)", why, n.Right)
+					//访问数组的索引越界时会直接报错
 				} else if t.IsArray() && x >= t.NumElem() {
 					yyerror("invalid array index %v (out of bounds for %d-element array)", n.Right, t.NumElem())
 				} else if Isconst(n.Left, CTSTR) && x >= int64(len(strlit(n.Left))) {
@@ -1711,6 +1715,7 @@ func typecheck1(n *Node, top int) (res *Node) {
 		}
 
 	case OMAKE:
+		//make操作
 		ok |= ctxExpr
 		args := n.List.Slice()
 		if len(args) == 0 {
@@ -1736,6 +1741,8 @@ func typecheck1(n *Node, top int) (res *Node) {
 			return n
 
 		case TSLICE:
+			//make slice参数校验
+			//make slice
 			if i >= len(args) {
 				yyerror("missing len argument to make(%v)", t)
 				n.Type = nil
@@ -1766,9 +1773,9 @@ func typecheck1(n *Node, top int) (res *Node) {
 				return n
 			}
 
-			n.Left = l
-			n.Right = r
-			n.Op = OMAKESLICE
+			n.Left = l        //len
+			n.Right = r       //cap
+			n.Op = OMAKESLICE //转换为OMAKESLICE操作
 
 		case TMAP:
 			if i < len(args) {
@@ -2816,6 +2823,7 @@ func typecheckcomplit(n *Node) (res *Node) {
 
 	setlineno(n.Right)
 
+	//代码中的 DDDArray 指的就是使用 [...]T 声明的数组，因为声明这种数组时需要使用三个点（Dot），所以在编译器中就被称作 DDDArray
 	// Need to handle [...]T arrays specially.
 	if n.Right.Op == OTARRAY && n.Right.Left != nil && n.Right.Left.Op == ODDD {
 		n.Right.Right = typecheck(n.Right.Right, ctxType)
@@ -2825,6 +2833,7 @@ func typecheckcomplit(n *Node) (res *Node) {
 		}
 		elemType := n.Right.Right.Type
 
+		//对[...]T 形式的数组的大小进行推导
 		length := typecheckarraylit(elemType, -1, n.List.Slice(), "array literal")
 
 		n.Op = OARRAYLIT
@@ -3018,6 +3027,7 @@ func typecheckarraylit(elemType *types.Type, bound int64, elts []*Node, ctx stri
 	}
 
 	var key, length int64
+	//通过遍历元素的方式来计算数组中元素的数量
 	for i, elt := range elts {
 		setlineno(elt)
 		vp := &elts[i]

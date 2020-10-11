@@ -332,8 +332,8 @@ type Tuple struct {
 
 // Array contains Type fields specific to array types.
 type Array struct {
-	Elem  *Type // element type
-	Bound int64 // number of elements; <0 if unknown yet
+	Elem  *Type // element type //元素类型
+	Bound int64 // number of elements; <0 if unknown yet //元素数量
 }
 
 // Slice contains Type fields specific to slice types.
@@ -491,6 +491,7 @@ func NewSlice(elem *Type) *Type {
 	}
 
 	t := New(TSLICE)
+	//编译器确定了类型之后，会将类型存储在 Extra 字段中帮助程序在运行时动态获取
 	t.Extra = Slice{Elem: elem}
 	elem.Cache.slice = t
 	return t

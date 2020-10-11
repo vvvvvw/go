@@ -78,6 +78,19 @@ func makefield(name string, t *types.Type) *types.Field {
 	return f
 }
 
+// 由于哈希表中可能存储不同类型的键值对并且 Go 语言也不支持泛型，所以键值对占据的内存空间大小只能在编译时进行推导，
+// 这些字段在运行时也都是通过计算内存地址的方式直接访问的，所以bmap的定义中就没有包含这些字段，在此处可以重建 完整的bmap结构（其实不是重建bmap类型，而是创建了一个新的类型用于存储bucket数据）
+/*
+type 新建的bucket类型 struct{
+	type bmap struct {
+    	topbits  [8]uint8
+    }
+    keys     [8]keytype
+    values   [8]valuetype
+    pad      uintptr
+    overflow uintptr
+}
+*/
 // bmap makes the map bucket type given the type of the map.
 func bmap(t *types.Type) *types.Type {
 	if t.MapType().Bucket != nil {
@@ -104,11 +117,13 @@ func bmap(t *types.Type) *types.Type {
 
 	arr = types.NewArray(keytype, BUCKETSIZE)
 	arr.SetNoalg(true)
+	//实际存放的 key列表
 	keys := makefield("keys", arr)
 	field = append(field, keys)
 
 	arr = types.NewArray(elemtype, BUCKETSIZE)
 	arr.SetNoalg(true)
+	//实际存放的value列表
 	elems := makefield("elems", arr)
 	field = append(field, elems)
 

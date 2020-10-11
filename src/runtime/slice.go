@@ -81,7 +81,9 @@ func makeslicecopy(et *_type, tolen int, fromlen int, from unsafe.Pointer) unsaf
 }
 
 func makeslice(et *_type, len, cap int) unsafe.Pointer {
+	//1.计算切片需要占用的内存空间
 	mem, overflow := math.MulUintptr(et.size, uintptr(cap))
+	//2.参数检查，如果参数检查失败，则抛出普通panic异常
 	if overflow || mem > maxAlloc || len < 0 || len > cap {
 		// NOTE: Produce a 'len out of range' error instead of a
 		// 'cap out of range' error when someone does make([]T, bignumber).
@@ -95,6 +97,7 @@ func makeslice(et *_type, len, cap int) unsafe.Pointer {
 		panicmakeslicecap()
 	}
 
+	//3.调用mallocgc分配内存空间并构建成SliceHeader结构体
 	return mallocgc(mem, et, true)
 }
 
@@ -122,6 +125,7 @@ func makeslice64(et *_type, len64, cap64 int64) unsafe.Pointer {
 // to calculate where to write new values during an append.
 // TODO: When the old backend is gone, reconsider this decision.
 // The SSA backend might prefer the new length or to return only ptr/cap and save stack space.
+//slice 扩容
 func growslice(et *_type, old slice, cap int) slice {
 	if raceenabled {
 		callerpc := getcallerpc()
@@ -143,15 +147,18 @@ func growslice(et *_type, old slice, cap int) slice {
 
 	newcap := old.cap
 	doublecap := newcap + newcap
+	//如果期望容量大于当前容量的两倍就会使用期望容量
 	if cap > doublecap {
 		newcap = cap
 	} else {
 		if old.len < 1024 {
+			//如果当前切片的长度小于 1024 就会将容量翻倍；
 			newcap = doublecap
 		} else {
 			// Check 0 < newcap to detect overflow
 			// and prevent an infinite loop.
 			for 0 < newcap && newcap < cap {
+				//如果当前切片的长度大于 1024 就会每次增加 25% 的容量，直到新容量大于期望容量；
 				newcap += newcap / 4
 			}
 			// Set newcap to the requested cap when
@@ -163,7 +170,8 @@ func growslice(et *_type, old slice, cap int) slice {
 	}
 
 	var overflow bool
-	var lenmem, newlenmem, capmem uintptr
+	var lenmem, newlenmem /*已有元素占用的内存空间*/, capmem uintptr /*需要分配的内存空间*/
+	//确定了切片的容量之后，就可以计算切片中新数组占用的内存了，计算的方法就是将目标容量和元素大小相乘，计算新容量时可能会发生溢出或者请求的内存超过上限，在这时就会直接 panic
 	// Specialize for common values of et.size.
 	// For 1 we don't need any division/multiplication.
 	// For sys.PtrSize, compiler will optimize division/multiplication into a shift by a constant.
@@ -222,6 +230,9 @@ func growslice(et *_type, old slice, cap int) slice {
 	var p unsafe.Pointer
 	if et.ptrdata == 0 {
 		p = mallocgc(capmem, nil, false)
+		//如果切片中元素不是指针类型，那么就会调用 memclrNoHeapPointers 将超出切片当前len的位置之外的内存清空。这里的 memclrNoHeapPointers 是用目标机器上的汇编指令实现的
+		//调用growslice将从old.len覆盖为cap（这将是新的len）。
+		////仅清除不会被覆盖的部分。
 		// The append() that calls growslice is going to overwrite from old.len to cap (which will be the new length).
 		// Only clear the part that will not be overwritten.
 		memclrNoHeapPointers(add(p, newlenmem), capmem-newlenmem)
@@ -234,6 +245,7 @@ func growslice(et *_type, old slice, cap int) slice {
 			bulkBarrierPreWriteSrcOnly(uintptr(p), uintptr(old.array), lenmem-et.size+et.ptrdata)
 		}
 	}
+	//使用 memmove 将原数组内存中的内容拷贝到新申请的内存中，这里的 memmove 是用目标机器上的汇编指令实现的
 	memmove(p, old.array, lenmem)
 
 	return slice{p, old.len, newcap}

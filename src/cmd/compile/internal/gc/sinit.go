@@ -367,6 +367,7 @@ func staticname(t *types.Type) *Node {
 	return n
 }
 
+//返回一个名字，这个名字对应着在静态数据段的符号名
 // readonlystaticname returns a name backed by a (writable) static data symbol.
 func readonlystaticname(t *types.Type) *Node {
 	n := staticname(t)
@@ -572,6 +573,13 @@ func fixedlit(ctxt initContext, kind initKind, n *Node, var_ *Node, init *Nodes)
 		case initKindStatic:
 			genAsStatic(a)
 		case initKindDynamic, initKindLocalCode:
+			//对于数组：initKindLocalCode会将原有的初始化语句 [3]int{1, 2, 3} 拆分成一个声明变量的表达式和几个赋值表达式，这些表达式会完成对数组的初始化：
+			/*
+				var arr [3]int
+				arr[0] = 1
+				arr[1] = 2
+				arr[2] = 3
+			*/
 			a = orderStmtInPlace(a, map[string][]*Node{})
 			a = walkstmt(a)
 			init.Append(a)
@@ -755,6 +763,7 @@ func slicelit(ctxt initContext, n *Node, var_ *Node, init *Nodes) {
 	init.Append(a)
 }
 
+//map初始化（字面量初始化）
 func maplit(n *Node, m *Node, init *Nodes) {
 	// make the map var
 	a := nod(OMAKE, nil, nil)
@@ -773,6 +782,13 @@ func maplit(n *Node, m *Node, init *Nodes) {
 	}
 
 	if len(entries) > 25 {
+		//一旦哈希表中元素的数量超过了 25 个，就会在编译期间创建两个数组分别存储键和值的信息，这些键值对会通过一个如下所示的 for 循环加入目标的哈希
+		//hash := make(map[string]int, 26)
+		//vstatk := []string{"1", "2", "3", ... ， "26"}
+		//vstatv := []int{1, 2, 3, ... , 26}
+		//for i := 0; i < len(vstak); i++ {
+		//    hash[vstatk[i]] = vstatv[i]
+		//}
 		// For a large number of entries, put them in an array and loop.
 
 		// build types [count]Tindex and [count]Tvalue
@@ -824,11 +840,17 @@ func maplit(n *Node, m *Node, init *Nodes) {
 		init.Append(loop)
 		return
 	}
+
 	// For a small number of entries, just add them directly.
 
 	// Build list of var[c] = expr.
 	// Use temporaries so that mapassign1 can have addressable key, elem.
 	// TODO(josharian): avoid map key temporaries for mapfast_* assignments with literal keys.
+	//当哈希表中的元素数量少于或者等于 25 个时，编译器会直接调用 addMapEntries 将字面量初始化的结构体转换成以下的代码，，将所有的键值对一次加入到哈希表中：
+	//hash := make(map[string]int, 3)
+	//hash["1"] = 2
+	//hash["3"] = 4
+	//hash["5"] = 6
 	tmpkey := temp(m.Type.Key())
 	tmpelem := temp(m.Type.Elem())
 
@@ -906,7 +928,9 @@ func anylit(n *Node, var_ *Node, init *Nodes) {
 			Fatalf("anylit: not struct/array")
 		}
 
+		//如果长度大于4
 		if var_.isSimpleName() && n.List.Len() > 4 {
+			//先获取一个唯一名称，这个名称对应着在静态数据段的符号名
 			// lay out static data
 			vstat := readonlystaticname(t)
 
@@ -914,8 +938,10 @@ func anylit(n *Node, var_ *Node, init *Nodes) {
 			if n.Op == OARRAYLIT {
 				ctxt = inNonInitFunction
 			}
+			//调用 cmd/compile/internal/gc.fixedlit 函数在静态存储区初始化数组中的元素并将临时变量赋值给当前的数组
 			fixedlit(ctxt, initKindStatic, n, vstat, init)
 
+			//拷贝到栈上
 			// copy static to var
 			a := nod(OAS, var_, vstat)
 
@@ -928,6 +954,7 @@ func anylit(n *Node, var_ *Node, init *Nodes) {
 			break
 		}
 
+		//如果长度小于4
 		var components int64
 		if n.Op == OARRAYLIT {
 			components = t.NumElem()
@@ -942,6 +969,13 @@ func anylit(n *Node, var_ *Node, init *Nodes) {
 			init.Append(a)
 		}
 
+		//对于数组：当数组中元素的个数小于或者等于四个时，cmd/compile/internal/gc.fixedlit 函数接受的 kind 是 initKindLocalCode，上述代码会将原有的初始化语句 [3]int{1, 2, 3} 拆分成一个声明变量的表达式和几个赋值表达式
+		/*
+			var arr [3]int
+			arr[0] = 1
+			arr[1] = 2
+			arr[2] = 3
+		*/
 		fixedlit(inInitFunction, initKindLocalCode, n, var_, init)
 
 	case OSLICELIT:

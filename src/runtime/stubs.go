@@ -6,6 +6,7 @@ package runtime
 
 import "unsafe"
 
+//返回 p+x位置的指针
 // Should be a built-in for unsafe.Pointer?
 //go:nosplit
 func add(p unsafe.Pointer, x uintptr) unsafe.Pointer {
@@ -74,6 +75,13 @@ func badsystemstack() {
 // for a new allocation) and hence contains only "junk".
 //
 // The (CPU-specific) implementations of this function are in memclr_*.s.
+/**
+memclrNoHeapPointers清除从ptr开始的n个字节。
+通常应使用typedmemclr。 memclrNoHeapPointers仅在调用者知道* ptr不包含堆指针时使用，主要有如下情况：
+* ptr是已经被初始化的内存，且其类型是无指针的，或者
+* ptr是未初始化的内存（例如，正在重用的内存），因此仅包含“垃圾数据”。
+此函数的（CPU特定）实现在memclr _ *。s中
+*/
 //go:noescape
 func memclrNoHeapPointers(ptr unsafe.Pointer, n uintptr)
 
