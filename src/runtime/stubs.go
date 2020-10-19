@@ -102,6 +102,10 @@ func reflect_memclrNoHeapPointers(ptr unsafe.Pointer, n uintptr) {
 //
 // Implementations are in memmove_*.s.
 //
+// memmove将n个字节从“from”复制到“to”。
+// memmove确保将“ from”中的任何指针写入到“ to” 都是 不可分割的，因此就算在并发环境下也不会出现半写的指针。
+//这对于防止垃圾读取到无效指针，这与其他语言中的memmove不同。另外，
+//memmove只会在 from或者to包含指针的情况下才会做上述优化。
 //go:noescape
 func memmove(to, from unsafe.Pointer, n uintptr)
 

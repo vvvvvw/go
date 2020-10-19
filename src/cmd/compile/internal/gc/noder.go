@@ -1416,9 +1416,12 @@ func (p *noder) basicLit(lit *syntax.BasicLit) Val {
 		var x string
 		if !lit.Bad {
 			if len(s) > 0 && s[0] == '`' {
+				//如果是原生字符串，则将 字符串中的\r 去除
 				// strip carriage returns from raw string
 				s = strings.Replace(s, "\r", "", -1)
 			}
+			//无论是 import 语句中包的路径、结构体中的字段标签还是表达式中的字符串
+			//将原生字符串中最后的换行符删除并对字符串 Token 进行 Unquote
 			x, _ = strconv.Unquote(s)
 		}
 		return Val{U: x}
