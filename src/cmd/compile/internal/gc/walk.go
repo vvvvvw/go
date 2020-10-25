@@ -2639,22 +2639,20 @@ func addstr(n *Node, init *Nodes) *Node {
 	}
 
 	buf := nodnil()
-	if n.Esc == EscNone {
+	if n.Esc == EscNone { //如果 拼接后的字符串没有逃逸到 堆上
 		sz := int64(0)
-		for _, n1 := range n.List.Slice() {
+		for _, n1 := range n.List.Slice() { //计算拼接后字符串的总长度
 			if n1.Op == OLITERAL {
 				sz += int64(len(strlit(n1)))
 			}
 		}
-
 		// Don't allocate the buffer if the result won't fit.
-		if sz < tmpstringbufsize {
+		if sz < tmpstringbufsize { //如果拼接后的字符串长度小于 32，则栈上先申请一个长度为buf的字节数组
 			// Create temporary buffer for result string on stack.
 			t := types.NewArray(types.Types[TUINT8], tmpstringbufsize)
 			buf = nod(OADDR, temp(t), nil)
 		}
 	}
-
 	// build list of string arguments
 	args := []*Node{buf}
 	for _, n2 := range n.List.Slice() {
@@ -2665,11 +2663,14 @@ func addstr(n *Node, init *Nodes) *Node {
 	if c <= 5 {
 		// small numbers of strings use direct runtime helpers.
 		// note: order.expr knows this cutoff too.
+		//如果需要拼接的字符串数量小于或者等于5个，调用 runtime.concatstring{2,3,4,5}  这几个函数，最终都会调用 runtime.concatstrings
 		fn = fmt.Sprintf("concatstring%d", c)
 	} else {
+		//如果超过 5 个就会直接选择 runtime.concatstrings 并传入一个数组切片
 		// large numbers of strings are passed to the runtime as a slice.
 		fn = "concatstrings"
 
+		//创建string切片
 		t := types.NewSlice(types.Types[TSTRING])
 		slice := nod(OCOMPLIT, nil, typenod(t))
 		if prealloc[n] != nil {

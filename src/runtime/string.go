@@ -21,12 +21,19 @@ type tmpBuf [tmpStringBufSize]byte
 // If buf != nil, the compiler has determined that the result does not
 // escape the calling function, so the string data can be stored in buf
 // if small enough.
-func concatstrings(buf *tmpBuf, a []string) string {
-	idx := 0
-	l := 0
-	count := 0
-	for i, x := range a {
+/*
+// concatstrings实现了Go字符串的串联x + y + z + ...
+//操作数通过切片a中传递。
+如果buf！= nil，并且当编译器判断到buf能容纳 生成的结果字符串，那么这个结果字符串最终会存储在buf中（如果只有一个非空字符串，且这个字符串不在堆栈上
+，这种情况下会直接返回原字符串而不会存储到buf中）
+*/
+func concatstrings(buf *tmpBuf, a []string) string { // 字符串拼接
+	idx := 0              //最后一个非空字符串的位置
+	l := 0                //拼接后字符串的长度
+	count := 0            //非空字符串的数量
+	for i, x := range a { //过滤空字符串并计算拼接后字符串的长度
 		n := len(x)
+		//如果是 空字符串，跳过
 		if n == 0 {
 			continue
 		}
@@ -44,12 +51,15 @@ func concatstrings(buf *tmpBuf, a []string) string {
 	// If there is just one string and either it is not on the stack
 	// or our result does not escape the calling frame (buf != nil),
 	// then we can return that string directly.
+	/*
+		//如果只有一个非空字符串，并且这个字符串不在堆栈上 或者 buf！= nil，这种情况下我们可以直接返回传入的该字符串。
+	*/
 	if count == 1 && (buf != nil || !stringDataOnStack(a[idx])) {
 		return a[idx]
 	}
-	s, b := rawstringtmp(buf, l)
+	s, b := rawstringtmp(buf, l) // 生成指定大小的字符串，返回一个string和切片，二者共享内存空间（如果buf的长度能容纳拼接后的字符串，则直接返回buf）
 	for _, x := range a {
-		copy(b, x)
+		copy(b, x) // string无法修改，只能通过切片修改
 		b = b[len(x):]
 	}
 	return s
@@ -147,7 +157,7 @@ func rawstringtmp(buf *tmpBuf, l int) (s string, b []byte) {
 //   where k is []byte, T1 to Tn is a nesting of struct and array literals.
 // - Used for "<"+string(b)+">" concatenation where b is []byte.
 // - Used for string(b)=="foo" comparison where b is []byte.
-func slicebytetostringtmp(ptr *byte, n int) (str string) {
+func slicebytetostringtmp(ptr *byte, n int) (str string) { //// 生成一个新的string，返回的string和ptr共享相同的空间
 	if raceenabled && n > 0 {
 		racereadrangepc(unsafe.Pointer(ptr),
 			uintptr(n),

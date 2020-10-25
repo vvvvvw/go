@@ -1421,7 +1421,7 @@ func (p *noder) basicLit(lit *syntax.BasicLit) Val {
 				s = strings.Replace(s, "\r", "", -1)
 			}
 			//无论是 import 语句中包的路径、结构体中的字段标签还是表达式中的字符串
-			//将原生字符串中最后的换行符删除并对字符串 Token 进行 Unquote
+			//对字符串 Token 进行 Unquote
 			x, _ = strconv.Unquote(s)
 		}
 		return Val{U: x}
