@@ -87,8 +87,10 @@ func concatstring5(buf *tmpBuf, a [5]string) string {
 // n is the length of the slice.
 // Buf is a fixed-size buffer for the result,
 // it is not nil if the result does not escape.
+//[]byte -> string
+//n : []byte的长度
 func slicebytetostring(buf *tmpBuf, ptr *byte, n int) (str string) {
-	if n == 0 {
+	if n == 0 { //字节数组的长度为 0，直接返回空字符串
 		// Turns out to be a relatively common case.
 		// Consider that you want to parse out data between parens in "foo()bar",
 		// you find the indices and convert the subslice to string.
@@ -103,7 +105,7 @@ func slicebytetostring(buf *tmpBuf, ptr *byte, n int) (str string) {
 	if msanenabled {
 		msanread(unsafe.Pointer(ptr), uintptr(n))
 	}
-	if n == 1 {
+	if n == 1 { //字节数组的长度是1，创建一个字符串，指针指向 单个字符缓存数组中和当前byte相同的那个
 		p := unsafe.Pointer(&staticuint64s[*ptr])
 		if sys.BigEndian {
 			p = add(p, 7)
@@ -113,14 +115,17 @@ func slicebytetostring(buf *tmpBuf, ptr *byte, n int) (str string) {
 		return
 	}
 
+	//根据传入的缓冲区大小是否能容纳新生成的字符串，决定是否需要为新的字符串再分配一片内存空间 还是直接复用buf数组
 	var p unsafe.Pointer
 	if buf != nil && n <= len(buf) {
 		p = unsafe.Pointer(buf)
 	} else {
 		p = mallocgc(uintptr(n), nil, false)
 	}
+	//runtime.stringStructOf 会将传入的字符串指针转换成 stringStruct 结构体指针，然后设置结构体持有的字符串指针 str 和长度 len
 	stringStructOf(&str).str = p
 	stringStructOf(&str).len = n
+	//通过 memmove 将原 []byte 中的字节全部复制到新的内存空间中。
 	memmove(p, unsafe.Pointer(ptr), uintptr(n))
 	return
 }
@@ -174,12 +179,15 @@ func slicebytetostringtmp(ptr *byte, n int) (str string) { //// 生成一个新�
 
 func stringtoslicebyte(buf *tmpBuf, s string) []byte {
 	var b []byte
+	//如果向该函数传入了缓冲区buf 且buf能容纳 字符串的长度，那么它会使用传入的缓冲区存储 []byte
 	if buf != nil && len(s) <= len(buf) {
 		*buf = tmpBuf{}
 		b = buf[:len(s)]
 	} else {
+		//否则，调用 runtime.rawbyteslice 创建一个新的能容纳 s的字节切片
 		b = rawbyteslice(len(s))
 	}
+	//copy 就会将字符串中的内容拷贝到新的 []byte 中。
 	copy(b, s)
 	return b
 }
