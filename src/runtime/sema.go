@@ -37,13 +37,24 @@ import (
 // See golang.org/issue/17953 for a program that worked badly
 // before we introduced the second level of list, and test/locklinear.go
 // for a test that exercises this.
+/*
+//用于sync.Mutex的异步信号量。
+//semaRoot拥有一个具有不同地址（s.elem）的sudog平衡树。
+//每个sudog都通过waitlink字段指向一个列表，这个列表由等待在相同地址上的其他sudog组成
+//对等待在相同地址上的sudog内部列表进行操作的时间复杂度都是 O（1）
+//。 对于顶层semaRoot列表的扫描的时间复杂度为O（log n），其中n是不同的地址数量（这个地址是因为阻塞 导致hash到给定semaRoot上 的goroutine等待的地址）
+//如果有程序性能不佳，请参阅golang.org/issue/17953
+//在介绍 二级列表和 单元测试test / locklinear.go之前请先参阅golang.org/issue/17953
+*/
 type semaRoot struct {
-	lock  mutex
-	treap *sudog // root of balanced tree of unique waiters.
-	nwait uint32 // Number of waiters. Read w/o the lock.
+	lock  mutex  // 为了保护 treap sudog链表 操作的锁，只是互斥量实现的一个简单版本
+	treap *sudog // root of balanced tree of unique waiters. sudog链表的根结点
+	nwait uint32 // Number of waiters. Read w/o the lock. 等待在锁上的等待者的数量
 }
 
 // Prime to not correlate with any user patterns.
+
+//质数
 const semTabSize = 251
 
 var semtable [semTabSize]struct {
@@ -95,6 +106,8 @@ func semacquire(addr *uint32) {
 	semacquire1(addr, false, 0, 0)
 }
 
+//不断调用尝试获取锁并休眠当前 Goroutine 等待信号量的释放，一旦当前 Goroutine 可以获取信号量，它就会立刻返回
+//获取 信号量，如果*addr<0，则将当前goroutine塞入信号量*addr关联的goroutine waiting list，并休眠
 func semacquire1(addr *uint32, lifo bool, profile semaProfileFlags, skipframes int) {
 	gp := getg()
 	if gp != gp.m.curg {
@@ -102,7 +115,7 @@ func semacquire1(addr *uint32, lifo bool, profile semaProfileFlags, skipframes i
 	}
 
 	// Easy case.
-	if cansemacquire(addr) {
+	if cansemacquire(addr) { //如果获取到了信号量，直接返回；否则 继续下面阻塞 等待信号量释放的过程
 		return
 	}
 
@@ -112,8 +125,9 @@ func semacquire1(addr *uint32, lifo bool, profile semaProfileFlags, skipframes i
 	//	enqueue itself as a waiter
 	//	sleep
 	//	(waiter descriptor is dequeued by signaler)
-	s := acquireSudog()
-	root := semroot(addr)
+	//
+	s := acquireSudog()   //获取或创建 sudog
+	root := semroot(addr) //获取semaRoot池中的 semaRoot
 	t0 := int64(0)
 	s.releasetime = 0
 	s.acquiretime = 0
@@ -129,10 +143,11 @@ func semacquire1(addr *uint32, lifo bool, profile semaProfileFlags, skipframes i
 		s.acquiretime = t0
 	}
 	for {
-		lockWithRank(&root.lock, lockRankRoot)
+		lockWithRank(&root.lock, lockRankRoot) //对链表操作 加锁
 		// Add ourselves to nwait to disable "easy case" in semrelease.
-		atomic.Xadd(&root.nwait, 1)
+		atomic.Xadd(&root.nwait, 1) //更新 锁的等待者的数量
 		// Check cansemacquire to avoid missed wakeup.
+		//在阻塞之前通过 cansemacquire函数检查 是否已经其他线程释放了锁，如果有的话，直接退出循环
 		if cansemacquire(addr) {
 			atomic.Xadd(&root.nwait, -1)
 			unlock(&root.lock)
@@ -140,9 +155,11 @@ func semacquire1(addr *uint32, lifo bool, profile semaProfileFlags, skipframes i
 		}
 		// Any semrelease after the cansemacquire knows we're waiting
 		// (we set nwait above), so go to sleep.
+		//将 sudog入等待队列，
 		root.queue(addr, s, lifo)
+		//阻塞
 		goparkunlock(&root.lock, waitReasonSemacquire, traceEvGoBlockSync, 4+skipframes)
-		if s.ticket != 0 || cansemacquire(addr) {
+		if s.ticket != 0 || cansemacquire(addr) /*如果能获取到信号量 则退出循环*/ {
 			break
 		}
 	}
@@ -221,16 +238,17 @@ func semroot(addr *uint32) *semaRoot {
 func cansemacquire(addr *uint32) bool {
 	for {
 		v := atomic.Load(addr)
-		if v == 0 {
+		if v == 0 { //如果信号量已经用尽，则返回false
 			return false
 		}
-		if atomic.Cas(addr, v, v-1) {
+		if atomic.Cas(addr, v, v-1) { //否则，信号量-1，表示获取了一个信号量，并返回true
 			return true
 		}
 	}
 }
 
 // queue adds s to the blocked goroutines in semaRoot.
+//将 当前要被阻塞的groutine 加入到 等待队列中排队
 func (root *semaRoot) queue(addr *uint32, s *sudog, lifo bool) {
 	s.g = getg()
 	s.elem = unsafe.Pointer(addr)

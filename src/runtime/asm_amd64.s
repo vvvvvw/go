@@ -574,8 +574,8 @@ CALLFN(·call536870912, 536870912)
 CALLFN(·call1073741824, 1073741824)
 
 TEXT runtime·procyield(SB),NOSPLIT,$0-0
-	MOVL	cycles+0(FP), AX
-again:
+	MOVL	cycles+0(FP), AX //把当前第一个参数（就是循环次数）的地址存储到AX寄存器中
+again: //循环调用PAUSE指令，循环次数为 runtime·procyield的入参
 	PAUSE
 	SUBL	$1, AX
 	JNZ	again

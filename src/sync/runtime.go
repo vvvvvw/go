@@ -17,6 +17,14 @@ func runtime_Semacquire(s *uint32)
 // If lifo is true, queue waiter at the head of wait queue.
 // skipframes is the number of frames to omit during tracing, counting from
 // runtime_SemacquireMutex's caller.
+//runtime_SemacquireMutex在方法中不断调用尝试获取锁并休眠当前 Goroutine 等待信号量的释放，一旦当前 Goroutine 可以获取信号量，它就会立刻返回
+/*
+SemacquireMutex类似于Semacquire，但用于分析竞争的Mutexes对象。
+如果lifo为true，则将 等待者 放在等待队列的开头。
+skipframes是跟踪期间要忽略的帧数（从
+runtime_SemacquireMutex的调用方开始算起）
+内部调用了runtime.semacquire1
+*/
 func runtime_SemacquireMutex(s *uint32, lifo bool, skipframes int)
 
 // Semrelease atomically increments *s and notifies a waiting goroutine

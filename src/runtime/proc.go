@@ -17,6 +17,31 @@ var buildVersion = sys.TheVersion
 // set using cmd/go/internal/modload.ModInfoProg
 var modinfo string
 
+/*
+Goroutine scheduler
+scheduler的工作是分发准备运行的goroutine到工作线程上。
+主要概念如下：
+G-goroutine。
+M-工作线程
+P-处理器，是执行Go代码所需的资源。
+M必须关联上P才能执行Go代码，如果没有P的话仅能 执行阻塞或执行系统调用或者io调用。
+设计文档: https://golang.org/s/go11sched。
+工作者线程parking/unparking:
+我们需要在保持足够的正在运行的工作线程以有效利用硬件并行度和阻塞一些多余的运行线程以节省CPU资源和功耗 之间进行平衡。这并不简单，原因有两个：（1）调度程序状态是有意分配的（特别是每个P的工作队列），因此很难快速计算全局最优的路径；（2）为了实现最佳线程管理，我们需要了解未来（对于在不久的将来会被使用的工作线程我们不能阻塞）。
+以下是三种已经被证明无效的方法：
+1.集中调度（将抑制可伸缩性）。
+2.直接进行gotroutine切换。也就是说，当我们新建一个新的goroutine，并且正好有一个空闲的P，那么就立刻唤醒线程并将这个goroutine和线程移交给P，并立即切换cpu执行。这会导致线程状态跳动，因为给这个goroutine使用的线程可能在下一刻就无法工作，我们需要阻塞这个线程。同样，这种做法也会破坏计算局部性（我们想要让goroutine一直在同一个线程上执行），并引入额外的延迟。
+3.每当我们新建一个goroutine并且当时有一个空闲的P的时候，我们就新建一个新线程，但是不切换cpu。这会导致过多的线程阻塞/线程唤醒状态的切换，因为新建的线程发现没有要执行的工作后会立刻被阻塞。
+如果存在一个空闲的P且当前没有处于spinning状态（一个工作线程被判断是处于spinning状态的条件是：工作线程在本地队列和全局队列中都找不到要执行的工作，线程的spinning状态 通过 m.spinning和sched.nmspinning来标志）的工作线程，此时如果我们有一个goroutine准备执行，我们就唤醒一个新线程。通过这种方式唤醒的线程 我们也认为是 spinning状态，我们唤醒线程的时候 不切换cpu，因此这些线程一开始不会参与工作。spinning的线程在阻塞之前都会在 对应的P的队列中 做几次自旋（查看是否有工作）。如果没有发现工作，这个线程会退出 Spinning状态并阻塞。
+如果至少有一个Spinning线程(sched.nmspinning>1)，当有goroutine准备执行工作时我们也不会阻塞新线程。为了弥补这个问题，如果最后一个线程发现了工作并且停止spinning，那么这个线程必须唤醒一个新的spinning线程。这种方式可以消除不可以的线程终断峰值，同时也能保证最大的cpu并行利用率。
+这种实现的主要复杂之处在于对于线程从spinning状态到非spinning状态的状态需要非常小心。这个转换和 提交一个新的goroutine 之间 在唤醒其他工作线程这个动作上存在竞态，如果这两个操作都没能唤醒其他工作线程，我们就无法充分利用cpu。
+目前goroutine就绪的一般模式是：提交goroutine到本地工作队列，通过#StoreLoad内存屏障，检查sched.nmspinning。
+Spinning到非Spinning状态转换的一般模式是：递减sched.nmspinning，通过#StoreLoad内存屏障，检查所有的P的工作队列中是否有新的工作。
+注意所有这些复杂性都不适用于全局运行队列，因为我们没有很草率的当goroutine提交到全局队列就唤醒线程。另请参阅nmspinning相关操作。
+
+
+
+*/
 // Goroutine scheduler
 // The scheduler's job is to distribute ready-to-run goroutines over worker threads.
 //
@@ -317,6 +342,10 @@ func gopark(unlockf func(*g, unsafe.Pointer) bool, lock unsafe.Pointer, reason w
 
 // Puts the current goroutine into a waiting state and unlocks the lock.
 // The goroutine can be made runnable again by calling goready(gp).
+/*
+将当前goroutine置于等待状态并释放锁。
+通过调用goready（gp）函数，可以使goroutine再次可运行。
+*/
 func goparkunlock(lock *mutex, reason waitReason, traceEv byte, traceskip int) {
 	gopark(parkunlock_c, unsafe.Pointer(lock), reason, traceEv, traceskip)
 }
@@ -329,6 +358,12 @@ func goready(gp *g, traceskip int) {
 
 //go:nosplit
 func acquireSudog() *sudog {
+	/*
+		微妙之处：信号量的实现逻辑 调用了acquireSudog, acquireSudog方法调用 new(sudog)，
+		new(sudog)方法调用了 malloc，malloc调用了垃圾回收期，垃圾回收期在 stopTheWorld期间调用了 信号量的实现逻辑。
+		Q：通过什么来打破这个循环
+		A：通过 new(sudog) 前后执行 acquirem / releasem来打破这个循环。在new(sudog)期间会调用acquirem/releasem来 递增m.locks属性，以此来避免 垃圾会搜 回收器来调用
+	*/
 	// Delicate dance: the semaphore implementation calls
 	// acquireSudog, acquireSudog calls new(sudog),
 	// new calls malloc, malloc can call the garbage collector,
@@ -337,12 +372,13 @@ func acquireSudog() *sudog {
 	// Break the cycle by doing acquirem/releasem around new(sudog).
 	// The acquirem/releasem increments m.locks during new(sudog),
 	// which keeps the garbage collector from being invoked.
-	mp := acquirem()
-	pp := mp.p.ptr()
+	mp := acquirem() //m.locks++并返回当前的m
+	pp := mp.p.ptr() //P的指针
 	if len(pp.sudogcache) == 0 {
 		lock(&sched.sudoglock)
 		// First, try to grab a batch from central cache.
 		for len(pp.sudogcache) < cap(pp.sudogcache)/2 && sched.sudogcache != nil {
+			//从 全局sudog缓存（sched.sudogcache）中 获取
 			s := sched.sudogcache
 			sched.sudogcache = s.next
 			s.next = nil
@@ -350,10 +386,12 @@ func acquireSudog() *sudog {
 		}
 		unlock(&sched.sudoglock)
 		// If the central cache is empty, allocate a new one.
+		//如果全局 sudog缓存中没有，则创建一个 新的sudog
 		if len(pp.sudogcache) == 0 {
 			pp.sudogcache = append(pp.sudogcache, new(sudog))
 		}
 	}
+	//从 p.sudogcache列表中获取 最后一个元素（同时从 p.sudogcache列表中删除）并返回 这个元素
 	n := len(pp.sudogcache)
 	s := pp.sudogcache[n-1]
 	pp.sudogcache[n-1] = nil
@@ -5528,8 +5566,18 @@ func sync_atomic_runtime_procUnpin() {
 	procUnpin()
 }
 
+//Mutex的自旋锁
+/*
+sync.Mutex是和其他线程共同使用的且会消耗cpu资源的，因此我们对自旋谨慎使用。
+1.已经自旋过的次数小于等于4次
+2.在多cpu计算机上运行
+3.GOMAXPROCS> 1
+4.当前至少有一个其他的P（非当前要获取锁的这个P 且 这个其他的P没有处于idle或者 spinning状态（一个工作线程被判断是处于spinning状态的条件是：工作线程在本地队列和全局队列中都找不到要执行的工作））
+5.当前要获取锁的P的本地队列 为空
+与运行时互斥锁相反，我们在这里不做被动自旋，因为可以在全局队列或其他P上进行工作。
+*/
 // Active spinning for sync.Mutex.
-//go:linkname sync_runtime_canSpin sync.runtime_canSpin
+//go:linkname sync_runtime_canSpin sync.runtime_canSpin 外部使用可以通过sync.runtime_canSpin方法
 //go:nosplit
 func sync_runtime_canSpin(i int) bool {
 	// sync.Mutex is cooperative, so we are conservative with spinning.
@@ -5540,6 +5588,7 @@ func sync_runtime_canSpin(i int) bool {
 	if i >= active_spin || ncpu <= 1 || gomaxprocs <= int32(sched.npidle+sched.nmspinning)+1 {
 		return false
 	}
+	//如果当前P的本地队列 不为空，则不自旋
 	if p := getg().m.p.ptr(); !runqempty(p) {
 		return false
 	}

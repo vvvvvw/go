@@ -159,12 +159,24 @@ const (
 // but on the contention path they sleep in the kernel.
 // A zeroed Mutex is unlocked (no need to initialize each lock).
 // Initialization is helpful for static lock ranking, but not required.
+/*
+//互斥锁。
+//在无竞争的情况下，和自旋锁一样快（这个仅是一些用户级别的说明），
+//但是在竞争情况下，会在内核中休眠。
+//互斥锁零值已解锁（因此不需要初始化每个锁）。
+//初始化有助于进行静态锁排名，但不是必需的。
+*/
 type mutex struct {
 	// Empty struct if lock ranking is disabled, otherwise includes the lock rank
-	lockRankStruct
+	lockRankStruct //lockRankStruct嵌入在互斥锁mutex结构体中，但当lock ranking功能（默认就是被禁用）被禁用时，本结构体为空;否则 本字段包含了 锁排名
 	// Futex-based impl treats it as uint32 key,
 	// while sema-based impl as M* waitm.
 	// Used to be a union, but unions break precise GC.
+	/*
+		在基于Futex的实现 中，本字段的含义为uint32类型的key，
+		在基于sema的实现中，本字段的含义为M * waitm。
+		之前上述两个字段是一个union，但是union破坏了精确的GC，因此修改为一个字段。
+	*/
 	key uintptr
 }
 
@@ -332,6 +344,13 @@ type gobuf struct {
 	bp   uintptr // for framepointer-enabled architectures
 }
 
+/*
+//sudog表示在 等待队列中的一个g，例如channel发送/接收 的等待队列
+//sudog是必需的，因为g和同步对象的关系 是 多对多的
+//g可以出现在许多等待列表中，因此可能有一个g对应在多个sudug中； 而许多g也可能正在等待同一个同步对象，因此一个对象可能有许多sudog。
+// sudog是从一个特殊的对象池中分配的。 通过acquireSudog函数和
+// releaseSudog函数分配和释放它们。
+*/
 // sudog represents a g in a wait list, such as for sending/receiving
 // on a channel.
 //
@@ -347,11 +366,11 @@ type sudog struct {
 	// channel this sudog is blocking on. shrinkstack depends on
 	// this for sudogs involved in channel ops.
 
-	g *g
+	g *g //阻塞的goroutine
 
 	next *sudog
 	prev *sudog
-	elem unsafe.Pointer // data element (may point to stack)
+	elem unsafe.Pointer // data element (may point to stack) 保存的数据部分
 
 	// The following fields are never accessed concurrently.
 	// For channels, waitlink is only accessed by g.
@@ -373,7 +392,7 @@ type sudog struct {
 	success bool
 
 	parent   *sudog // semaRoot binary tree
-	waitlink *sudog // g.waiting list or semaRoot
+	waitlink *sudog // g.waiting list or semaRoot 指向相同地址的所有sudog 组成的等待列表
 	waittail *sudog // semaRoot
 	c        *hchan // channel
 }
@@ -719,8 +738,8 @@ type schedt struct {
 	ngsys uint32 // number of system goroutines; updated atomically
 
 	pidle      puintptr // idle p's
-	npidle     uint32
-	nmspinning uint32 // See "Worker thread parking/unparking" comment in proc.go.
+	npidle     uint32   //当前空闲的P的数量
+	nmspinning uint32   // See "Worker thread parking/unparking" comment in proc.go. 当前处于spinning状态的线程数，（一个工作线程被判断是处于spinning状态的条件是：工作线程在本地队列和全局队列中都找不到要执行的工作）
 
 	// Global runnable queue.
 	runq     gQueue
@@ -747,7 +766,7 @@ type schedt struct {
 	}
 
 	// Central cache of sudog structs.
-	sudoglock  mutex
+	sudoglock  mutex //用于sudog创建的锁
 	sudogcache *sudog
 
 	// Central pool of available defer structs of different sizes.

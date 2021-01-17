@@ -8,6 +8,7 @@ package runtime
 
 // // lockRankStruct is embedded in mutex, but is empty when staticklockranking is
 // disabled (the default)
+//lockRankStruct嵌入在互斥锁mutex结构体中，但当staticklockranking（默认就是被禁用）被禁用时，本结构体为空
 type lockRankStruct struct {
 }
 

@@ -23,8 +23,8 @@ func throw(string) // provided by runtime
 //
 // A Mutex must not be copied after first use.
 type Mutex struct {
-	state int32
-	sema  uint32
+	state int32  //表示当前互斥锁的状态  最低三位分别表示 mutexLocked（表示互斥锁的锁定状态）、mutexWoken（表示从正常模式被唤醒） 和 mutexStarving（当前的互斥锁进入饥饿状态），剩下的位置用来表示当前有多少个 Goroutine 等待互斥锁的释放
+	sema  uint32 //信号量, 如果为0 表示 信号 用完了
 }
 
 // A Locker represents an object that can be locked and unlocked.
@@ -34,12 +34,12 @@ type Locker interface {
 }
 
 const (
-	mutexLocked = 1 << iota // mutex is locked
-	mutexWoken
-	mutexStarving
-	mutexWaiterShift = iota
+	mutexLocked      = 1 << iota // mutex is locked //1：表示互斥锁已经被锁定
+	mutexWoken                   //2：表示当前有goroutine在自旋，设置此标志，当mutex被解锁时不要唤醒阻塞goroutine，这样才能把 mutex尽可能给 正在自旋的线程（节省了 线程状态切换的开销）
+	mutexStarving                //4：当前的互斥锁进入饥饿状态
+	mutexWaiterShift = iota      //3
 
-	// Mutex fairness.
+	// Mutex fairn ess.
 	//
 	// Mutex can be in 2 modes of operations: normal and starvation.
 	// In normal mode waiters are queued in FIFO order, but a woken up waiter
@@ -71,17 +71,24 @@ const (
 // blocks until the mutex is available.
 func (m *Mutex) Lock() {
 	// Fast path: grab unlocked mutex.
-	if atomic.CompareAndSwapInt32(&m.state, 0, mutexLocked) {
+	if atomic.CompareAndSwapInt32(&m.state, 0, mutexLocked) { //如果未锁定，则cas加锁（将 mutexLocked 位置成 1），如果成功，直接返回
 		if race.Enabled {
 			race.Acquire(unsafe.Pointer(m))
 		}
 		return
 	}
-	// Slow path (outlined so that the fast path can be inlined)
-	m.lockSlow()
+	// Slow path (outlined so that the fast path can be inlined) slow path（不是内联的，fast path是内联的）
+	m.lockSlow() // 如果互斥锁的状态不是 0 时就会调用 sync.Mutex.lockSlow 尝试通过自旋（Spinnig）等方式等待锁的释放
 }
 
+//通过自旋（Spinnig）等方式等待锁的释放
 func (m *Mutex) lockSlow() {
+	//判断当前 Goroutine 能否进入自旋（自旋会消耗cpu，因此能进入自旋的条件比较苛刻：
+	//1.互斥锁只有在普通模式才能进入自旋；
+	//2.sync.runtime_canSpin 需要返回 true：
+	//3.运行在多 CPU 的机器上；
+	//4.当前 Goroutine 为了获取该锁进入自旋的次数小于四次；
+	//5.当前机器上至少存在一个正在运行的处理器 P 并且处理的运行队列为空；）
 	var waitStartTime int64
 	starving := false
 	awoke := false
@@ -90,52 +97,58 @@ func (m *Mutex) lockSlow() {
 	for {
 		// Don't spin in starvation mode, ownership is handed off to waiters
 		// so we won't be able to acquire the mutex anyway.
-		if old&(mutexLocked|mutexStarving) == mutexLocked && runtime_canSpin(iter) {
+		if old&(mutexLocked|mutexStarving) == mutexLocked /*当前互斥锁处于普通模式*/ && runtime_canSpin(iter) {
 			// Active spinning makes sense.
 			// Try to set mutexWoken flag to inform Unlock
 			// to not wake other blocked goroutines.
-			if !awoke && old&mutexWoken == 0 && old>>mutexWaiterShift != 0 &&
-				atomic.CompareAndSwapInt32(&m.state, old, old|mutexWoken) {
+			//主动 自旋很有意义。 如果当前goroutine处于自旋状态，尝试设置MutexWoken标志通知 解锁 者
+			//不要唤醒其他被阻塞的goroutine。（这样就只有 自旋线程能获取锁了）
+			if !awoke && old&mutexWoken == 0 /*当前没有处于 mutexWoken状态*/ && old>>mutexWaiterShift != 0 /*当前有其他阻塞在本mutex上的进程*/ &&
+				atomic.CompareAndSwapInt32(&m.state, old, old|mutexWoken) { //设置 mutexWoken标记
 				awoke = true
 			}
+			//调用sync.runtime_doSpin，内部调用了runtime.procyield，runtime.procyield内部执行了 30 次的 PAUSE 指令，该指令只会占用 CPU 并消耗 CPU 时间
 			runtime_doSpin()
 			iter++
+			//获取当前互斥锁的最新状态，重新开始循环
 			old = m.state
 			continue
 		}
+		//如果 不满足 spinning的条件
 		new := old
 		// Don't try to acquire starving mutex, new arriving goroutines must queue.
-		if old&mutexStarving == 0 {
+		if old&mutexStarving == 0 { //不在饥饿模式的时候才尝试获取锁
 			new |= mutexLocked
 		}
-		if old&(mutexLocked|mutexStarving) != 0 {
+		if old&(mutexLocked|mutexStarving) != 0 { //如果当前是处于 饥饿模式 或者 当前是处于被锁状态，那么将等待，因此将等待者数量+1
 			new += 1 << mutexWaiterShift
 		}
 		// The current goroutine switches mutex to starvation mode.
 		// But if the mutex is currently unlocked, don't do the switch.
 		// Unlock expects that starving mutex has waiters, which will not
 		// be true in this case.
-		if starving && old&mutexLocked != 0 {
+		if starving && old&mutexLocked != 0 { //如果当前goroutine发现超过 1ms 没有获取到锁，且此时 处于被锁状态，则切换到 饥饿模式
 			new |= mutexStarving
 		}
 		if awoke {
 			// The goroutine has been woken from sleep,
 			// so we need to reset the flag in either case.
+			//如果当前goroutine在自旋的时候 设置过 mutexWoken标记，那么现在不自旋了，关掉
 			if new&mutexWoken == 0 {
 				throw("sync: inconsistent mutex state")
 			}
 			new &^= mutexWoken
 		}
-		if atomic.CompareAndSwapInt32(&m.state, old, new) {
-			if old&(mutexLocked|mutexStarving) == 0 {
+		if atomic.CompareAndSwapInt32(&m.state, old, new) { //如果cas成功
+			if old&(mutexLocked|mutexStarving) == 0 { //如果 之前不是处于 被锁状态 或者 饥饿状态，则能加锁，此时cas成功 表示加锁成功，返回
 				break // locked the mutex with CAS
 			}
 			// If we were already waiting before, queue at the front of the queue.
-			queueLifo := waitStartTime != 0
+			queueLifo := waitStartTime != 0 //如果 waitStartTime不为0，表示之前就已经过了自旋执行到这一步了，那么此时 queueLifo设置为true
 			if waitStartTime == 0 {
-				waitStartTime = runtime_nanotime()
+				waitStartTime = runtime_nanotime() //将waitStartTime设置为 当前时间
 			}
-			runtime_SemacquireMutex(&m.sema, queueLifo, 1)
+			runtime_SemacquireMutex(&m.sema, queueLifo, 1) //调用 sync.runtime_SemacquireMutex 使用信号量保证资源不会被两个 Goroutine 获取
 			starving = starving || runtime_nanotime()-waitStartTime > starvationThresholdNs
 			old = m.state
 			if old&mutexStarving != 0 {
@@ -161,7 +174,7 @@ func (m *Mutex) lockSlow() {
 			awoke = true
 			iter = 0
 		} else {
-			old = m.state
+			old = m.state //更新old字段，重新循环
 		}
 	}
 
